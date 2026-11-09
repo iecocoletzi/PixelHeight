@@ -1,104 +1,16 @@
-import warnings
-from math import hypot, isfinite
+from math import hypot
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 from tkinter.scrolledtext import ScrolledText
 from PIL import Image, ImageOps, ImageTk
 
 CLAVES = ('cabeza', 'pies', 'azotea', 'base')
 
 
-class DatosInvalidos(ValueError):
-    pass
-
-def validar_puntos(puntos, ancho, alto):
-    puntos_validos = {}
-    for nombre in CLAVES:
-        punto = puntos.get(nombre)
-        if punto is None:
-            continue
-        try:
-            x = float(punto['x'])
-            y = float(punto['y'])
-        except (ValueError, TypeError, KeyError, OverflowError):
-            raise DatosInvalidos('Coordenadas invalidas.') from None
-        if not isfinite(x) or not isfinite(y):
-            raise DatosInvalidos('Coordenadas invalidas.')
-        if not (0 <= x <= ancho - 1 and 0 <= y <= alto - 1):
-            raise DatosInvalidos('Hay un punto fuera de la fotografia.')
-        puntos_validos[nombre] = {'x': x, 'y': y}
-    return puntos_validos
-
-
-def foto(puntos, ancho, alto, persona_m):
-    puntos = validar_puntos(puntos, ancho, alto)
-    if len(puntos) != 4:
-        raise DatosInvalidos('Marca cabeza, pies, azotea y base para calcular.')
-
-    medidas = []
-    for arriba, abajo in [('cabeza', 'pies'), ('azotea', 'base')]:
-        dx = puntos[abajo]['x'] - puntos[arriba]['x']
-        dy = puntos[abajo]['y'] - puntos[arriba]['y']
-        if dy <= 0:
-            raise DatosInvalidos('Los extremos superiores deben quedar por encima de los inferiores.')
-        medidas.append(hypot(dx, dy))
-
-    persona_px, edificio_px = medidas
-    if persona_px < 40:
-        raise DatosInvalidos('La persona mide menos de 40 pixeles en la foto. Usa una foto con mas detalle.')
-
-    altura = edificio_px / persona_px * persona_m
-    formula = f'H = ({edificio_px:.3f} / {persona_px:.3f}) x {persona_m:g} = {altura:.4f} m.'
-    return altura, formula
-
-
 NOMBRES = ('1. Cabeza de la persona', '2. Pies de la persona',
            '3. Parte superior del edificio', '4. Base del edificio')
 COLORES = ('#16b6ac', '#16b6ac', '#ff9f43', '#ff9f43')
-
-
-def a_imagen(x, y, escala, origen_x, origen_y):
-    return {'x': (x - origen_x) / escala, 'y': (y - origen_y) / escala}
-
-
-def a_pantalla(punto, escala, origen_x, origen_y):
-    x = punto['x'] * escala + origen_x
-    y = punto['y'] * escala + origen_y
-    return x, y
-
-
-def zoom_anclado(x, y, escala_actual, escala_nueva, origen_x, origen_y):
-    punto = a_imagen(x, y, escala_actual, origen_x, origen_y)
-    nuevo_origen_x = x - punto['x'] * escala_nueva
-    nuevo_origen_y = y - punto['y'] * escala_nueva
-    return nuevo_origen_x, nuevo_origen_y
-
-
-def numero(texto):
-    try:
-        altura = float(texto.strip().replace(',', '.'))
-        if not isfinite(altura) or altura <= 0:
-            raise ValueError
-        return altura
-    except (ValueError, OverflowError):
-        raise DatosInvalidos('Introduce una altura valida mayor que cero, en metros.') from None
-
-
-def cargar(ruta):
-    if Path(ruta).stat().st_size > 40*1024*1024:
-        raise DatosInvalidos('Selecciona una imagen de hasta 40 MB.')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', Image.DecompressionBombWarning)
-        with Image.open(ruta) as original:
-            if original.format not in ('JPEG', 'PNG'):
-                raise DatosInvalidos('Usa JPG o PNG; convierte HEIC a JPEG.')
-            if original.width*original.height > 60_000_000 or min(original.size) < 2:
-                raise DatosInvalidos('Resolucion admitida: de 2 pixeles por lado a 60 megapixeles.')
-            rgba = ImageOps.exif_transpose(original).convert('RGBA')
-            fondo = Image.new('RGBA', rgba.size, 'white')
-            fondo.alpha_composite(rgba)
-            return fondo.convert('RGB')
 
 
 class Aplicacion:
@@ -137,12 +49,7 @@ class Aplicacion:
         for i, nombre in enumerate(NOMBRES):
             ttk.Radiobutton(lateral, text=nombre, variable=self.objetivo, value=i).pack(anchor='w', pady=4)
         ttk.Separator(lateral).pack(fill='x', pady=8)
-        for texto, comando in [('Ajustar foto', self.ajustar),
-                               ('Acercar +', lambda: self.zoom(1.25)),
-                               ('Alejar -', lambda: self.zoom(0.8)),
-                               ('Borrar punto seleccionado', self.borrar),
-                               ('Deshacer', self.deshacer), ('Limpiar puntos', self.limpiar)]:
-            ttk.Button(lateral, text=texto, command=comando).pack(fill='x', pady=2)
+        ttk.Button(lateral, text='Limpiar puntos', command=self.limpiar).pack(fill='x', pady=2)
         self.canvas = tk.Canvas(principal, bg='#22262b', highlightthickness=0)
         self.canvas.pack(side='left', fill='both', expand=True)
         ttk.Label(root, textvariable=self.resumen, font=('TkDefaultFont', 14, 'bold'), padding=8).pack(anchor='w')
@@ -165,24 +72,25 @@ class Aplicacion:
             campo.trace_add('write', lambda *_: self.calcular())
 
     def abrir(self):
-        ruta = filedialog.askopenfilename(title='Elegir fotografia', filetypes=[('Fotografias', '*.jpg *.jpeg *.png'), ('Todos los archivos', '*.*')])
+        ruta = filedialog.askopenfilename(
+            title='Elegir fotografia',
+            filetypes=[('Fotografias', '*.jpg *.jpeg *.png'), ('Todos los archivos', '*.*')]
+        )
         if not ruta:
             return
-        try:
-            imagen = cargar(ruta)
-        except (ValueError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-            messagebox.showerror('No se pudo abrir la fotografia', str(exc))
-            return
-        self.establecer_imagen(imagen, Path(ruta).name)
 
-    def establecer_imagen(self, imagen, nombre):
-        self.imagen = imagen
+        with Image.open(ruta) as original:
+            imagen = ImageOps.exif_transpose(original).convert('RGBA')
+            fondo = Image.new('RGBA', imagen.size, 'white')
+            fondo.alpha_composite(imagen)
+            self.imagen = fondo.convert('RGB')
+
+        self.nombre = Path(ruta).name
         self.puntos = {}
         self.historial = []
         self.arrastre = None
         self.pan = None
         self.objetivo.set(0)
-        self.nombre = nombre
         self.ajustar()
         self.calcular()
 
@@ -206,11 +114,10 @@ class Aplicacion:
         if y is None:
             y = self.canvas.winfo_height() / 2
 
-        escala_nueva = max(0.01, min(32.0, self.escala * factor))
-        self.origen_x, self.origen_y = zoom_anclado(
-            x, y, self.escala, escala_nueva, self.origen_x, self.origen_y
-        )
-        self.escala = escala_nueva
+        punto = self.coordenada(x, y)
+        self.escala *= factor
+        self.origen_x = x - punto['x'] * self.escala
+        self.origen_y = y - punto['y'] * self.escala
         self.dibujar()
 
     def rueda(self, evento):
@@ -224,8 +131,8 @@ class Aplicacion:
         self.canvas.delete('all')
         if self.imagen is None:
             return
-        ancho = max(1, self.canvas.winfo_width())
-        alto = max(1, self.canvas.winfo_height())
+        ancho = self.canvas.winfo_width()
+        alto = self.canvas.winfo_height()
         escala_inversa = 1 / self.escala
         transformacion = (
             escala_inversa, 0, -self.origen_x * escala_inversa,
@@ -248,19 +155,17 @@ class Aplicacion:
         self.estado.set(f'{self.nombre} | {self.imagen.width} x {self.imagen.height} px | Zoom {self.escala*100:.0f}% | {len(self.puntos)}/4 puntos')
 
     def pantalla(self, punto):
-        return a_pantalla(punto, self.escala, self.origen_x, self.origen_y)
+        x = punto['x'] * self.escala + self.origen_x
+        y = punto['y'] * self.escala + self.origen_y
+        return x, y
 
-    def coordenada(self, x, y, limitar=False):
-        punto = a_imagen(x, y, self.escala, self.origen_x, self.origen_y)
-        if limitar:
-            punto['x'] = max(0, min(self.imagen.width - 1, punto['x']))
-            punto['y'] = max(0, min(self.imagen.height - 1, punto['y']))
-        return punto
+    def coordenada(self, x, y):
+        return {'x': (x - self.origen_x) / self.escala,
+                'y': (y - self.origen_y) / self.escala}
 
     def recordar(self):
         copia = {nombre: punto.copy() for nombre, punto in self.puntos.items()}
         self.historial.append(copia)
-        self.historial = self.historial[-80:]
 
     def pulsar(self, evento):
         self.canvas.focus_set()
@@ -282,10 +187,6 @@ class Aplicacion:
                 return
 
         punto = self.coordenada(evento.x, evento.y)
-        if not (0 <= punto['x'] <= self.imagen.width - 1 and
-                0 <= punto['y'] <= self.imagen.height - 1):
-            return
-
         self.recordar()
         indice = self.objetivo.get()
         nombre = CLAVES[indice]
@@ -301,7 +202,7 @@ class Aplicacion:
 
     def mover_punto(self, evento):
         if self.arrastre:
-            self.puntos[self.arrastre] = self.coordenada(evento.x, evento.y, limitar=True)
+            self.puntos[self.arrastre] = self.coordenada(evento.x, evento.y)
             self.actualizar()
 
     def iniciar_pan(self, evento):
@@ -331,8 +232,8 @@ class Aplicacion:
             dx, dy = movimientos[evento.keysym]
             paso = 0.1 if evento.state & 1 else 1
             punto = self.puntos[nombre]
-            punto['x'] = max(0, min(self.imagen.width - 1, punto['x'] + dx * paso))
-            punto['y'] = max(0, min(self.imagen.height - 1, punto['y'] + dy * paso))
+            punto['x'] += dx * paso
+            punto['y'] += dy * paso
             self.actualizar()
             return 'break'
 
@@ -360,28 +261,29 @@ class Aplicacion:
 
     def calcular(self):
         self.resumen.set('Altura estimada: -')
-        try:
-            if self.imagen is None:
-                raise DatosInvalidos('Elige una fotografia JPG o PNG.')
-            altura_persona = numero(self.persona.get())
-            altura_real = None
-            if self.real.get().strip():
-                altura_real = numero(self.real.get())
+        texto = ''
+        if len(self.puntos) == 4 and self.persona.get().strip():
+            cabeza = self.puntos['cabeza']
+            pies = self.puntos['pies']
+            azotea = self.puntos['azotea']
+            base = self.puntos['base']
+            persona_px = hypot(pies['x'] - cabeza['x'], pies['y'] - cabeza['y'])
+            edificio_px = hypot(base['x'] - azotea['x'], base['y'] - azotea['y'])
+            altura_persona = float(self.persona.get().replace(',', '.'))
+            altura = edificio_px / persona_px * altura_persona
+            texto = f'H = ({edificio_px:.3f} / {persona_px:.3f}) x {altura_persona:g} = {altura:.4f} m.'
 
-            altura, formula = foto(self.puntos, *self.imagen.size, altura_persona)
-            lineas = [formula]
-            if altura_real is not None:
+            if self.real.get().strip():
+                altura_real = float(self.real.get().replace(',', '.'))
                 error_absoluto = abs(altura - altura_real)
                 error_porcentual = 100 * error_absoluto / altura_real
-                lineas.append(
-                    f'Edificio real: {altura_real:g} m | '
+                texto += (
+                    f'\nEdificio real: {altura_real:g} m | '
                     f'Error absoluto: {error_absoluto:.2f} m | '
                     f'Error porcentual: {error_porcentual:.2f}%'
                 )
-            texto = '\n'.join(lineas)
             self.resumen.set(f'Altura estimada: {altura:.2f} m  ({altura * 100:.0f} cm)')
-        except DatosInvalidos as exc:
-            texto = str(exc)
+
         self.salida.configure(state='normal')
         self.salida.delete('1.0', 'end')
         self.salida.insert('1.0', texto)
