@@ -21,7 +21,6 @@ class Aplicacion:
         root.minsize(850, 650)
         self.imagen = None
         self.puntos = {}
-        self.historial = []
         self.escala = 1.0
         self.origen_x = 0.0
         self.origen_y = 0.0
@@ -87,7 +86,6 @@ class Aplicacion:
 
         self.nombre = Path(ruta).name
         self.puntos = {}
-        self.historial = []
         self.arrastre = None
         self.pan = None
         self.objetivo.set(0)
@@ -106,13 +104,9 @@ class Aplicacion:
         self.origen_y = (alto - self.imagen.height * self.escala) / 2
         self.dibujar()
 
-    def zoom(self, factor, x=None, y=None):
+    def zoom(self, factor, x, y):
         if self.imagen is None:
             return
-        if x is None:
-            x = self.canvas.winfo_width() / 2
-        if y is None:
-            y = self.canvas.winfo_height() / 2
 
         punto = self.coordenada(x, y)
         self.escala *= factor
@@ -163,10 +157,6 @@ class Aplicacion:
         return {'x': (x - self.origen_x) / self.escala,
                 'y': (y - self.origen_y) / self.escala}
 
-    def recordar(self):
-        copia = {nombre: punto.copy() for nombre, punto in self.puntos.items()}
-        self.historial.append(copia)
-
     def pulsar(self, evento):
         self.canvas.focus_set()
         if self.imagen is None:
@@ -181,13 +171,11 @@ class Aplicacion:
         if cercanos:
             distancia, nombre = min(cercanos)
             if distancia <= 10:
-                self.recordar()
                 self.arrastre = nombre
                 self.objetivo.set(CLAVES.index(nombre))
                 return
 
         punto = self.coordenada(evento.x, evento.y)
-        self.recordar()
         indice = self.objetivo.get()
         nombre = CLAVES[indice]
         self.puntos[nombre] = punto
@@ -228,7 +216,6 @@ class Aplicacion:
         }
         nombre = CLAVES[self.objetivo.get()]
         if evento.keysym in movimientos and nombre in self.puntos:
-            self.recordar()
             dx, dy = movimientos[evento.keysym]
             paso = 0.1 if evento.state & 1 else 1
             punto = self.puntos[nombre]
@@ -240,20 +227,13 @@ class Aplicacion:
     def borrar(self):
         nombre = CLAVES[self.objetivo.get()]
         if nombre in self.puntos:
-            self.recordar()
             del self.puntos[nombre]
             self.actualizar()
 
     def limpiar(self):
-        self.recordar()
         self.puntos = {}
         self.objetivo.set(0)
         self.actualizar()
-
-    def deshacer(self):
-        if self.historial:
-            self.puntos = self.historial.pop()
-            self.actualizar()
 
     def actualizar(self):
         self.calcular()
